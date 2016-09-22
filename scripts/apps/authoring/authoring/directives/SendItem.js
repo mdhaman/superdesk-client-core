@@ -1,11 +1,11 @@
 SendItem.$inject = ['$q', 'api', 'desks', 'notify', 'authoringWorkspace',
     'superdeskFlags', '$location', 'macros', '$rootScope',
     'authoring', 'send', 'editor', 'confirm', 'archiveService',
-    'preferencesService', 'multi', 'datetimeHelper', 'config', 'privileges'];
+    'preferencesService', 'multi', 'datetimeHelper', 'config', 'privileges', 'storage'];
 export function SendItem($q, api, desks, notify, authoringWorkspace,
                   superdeskFlags, $location, macros, $rootScope,
                   authoring, send, editor, confirm, archiveService,
-                  preferencesService, multi, datetimeHelper, config, privileges) {
+                  preferencesService, multi, datetimeHelper, config, privileges, storage) {
     return {
         scope: {
             item: '=',
@@ -23,26 +23,45 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
             scope.desks = null;
             scope.stages = null;
             scope.macros = null;
+            scope.userDesks = null;
+            scope.allDesks = null;
             scope.task = null;
             scope.selectedDesk = null;
             scope.selectedStage = null;
             scope.selectedMacro = null;
+            scope.defaultDesk = null;
             scope.beforeSend = scope._beforeSend || $q.when;
-            scope.destination_last = null;
+            scope.destination_last = {send_to: null, publish: null};
             scope.origItem = angular.extend({}, scope.item);
+            scope.userActions = {send_to: 'send_to', publish: 'publish'};
 
+            // key for the storing last desk/stage in the user preferences for send action.
             var PREFERENCE_KEY = 'destination:active';
+
+            // key for the storing last user action (send to/publish) in the storage.
+            var USER_ACTION_KEY = 'send_to_user_action';
 
             scope.$watch('item', activateItem);
             scope.$watch(send.getConfig, activateConfig);
+            scope.$watch('selectedDesk', function(desk) {
+                // set the default desk if publish panel is active.
+                if (scope.currentUserAction === scope.userActions.publish && desk &&
+                    scope.item && scope.item.task && desk._id === scope.item.task.desk) {
+                    scope.defaultDesk = desk;
+                } else {
+                    scope.defaultDesk = null;
+                }
+            });
 
             scope.publish = function() {
                 scope.loading = true;
                 var result = scope._publish();
-                $q.resolve(result).then(function(r) {
+                return $q.resolve(result).then(function(r) {
                     scope.loading = false;
+                    return r;
                 }, function(e) {
                     scope.loading = false;
+                    return $q.reject(false);
                 });
             };
 
@@ -69,14 +88,13 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
                 if (scope.isActive) {
                     desks.initialize()
                         .then(fetchDesks)
-                        .then(fetchStages)
-                        .then(fetchMacros)
-                        .then(initializeItemActions);
+                        .then(initialize)
+                        .then(setDesksAndStages);
                 }
             }
 
-            scope.getLastDestination = function() {
-                return preferencesService.get(PREFERENCE_KEY).then(function(prefs) {
+            scope.getLastDestination = function(key) {
+                return preferencesService.get(key).then(function(prefs) {
                     return prefs;
                 });
             };
@@ -153,11 +171,19 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
              */
             scope.showSendButtonAndDestination = function () {
                 if (scope.itemActions) {
-                    return scope.mode === 'ingest' ||
-                            scope.mode === 'personal' ||
-                            scope.mode === 'monitoring' ||
-                            (scope.mode === 'authoring' && scope.isSendEnabled() && scope.itemActions.send) ||
-                            scope.mode === 'spike';
+                    var preCondition = (scope.mode === 'ingest' ||
+                                        scope.mode === 'personal' ||
+                                        scope.mode === 'monitoring' ||
+                                        (scope.mode === 'authoring' &&
+                                        scope.isSendEnabled() &&
+                                        scope.itemActions.send) ||
+                                        scope.mode === 'spike');
+
+                    if (scope.currentUserAction === scope.userActions.publish) {
+                        return preCondition && scope.showSendAndPublish();
+                    }
+
+                    return preCondition;
                 }
             };
 
@@ -168,7 +194,8 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
             scope.disableSendButton = function () {
                 if (scope.item && scope.item.task) {
                     return !scope.selectedDesk ||
-                            (scope.mode !== 'ingest' && scope.selectedStage && scope.selectedStage._id === scope.item.task.stage);
+                           (scope.mode !== 'ingest' && scope.selectedStage &&
+                           scope.selectedStage._id === scope.item.task.stage);
                 }
             };
 
@@ -234,6 +261,11 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
                     (!authoring.isPublished(scope.item) || publishedCondition);
             };
 
+            /**
+             * Send the content to different desk/stage
+             * @param {Boolean} open - True to open the item.
+             * @return {Object} promise
+             */
             function runSend(open) {
                 scope.loading = true;
                 scope.item.sendTo = true;
@@ -246,7 +278,7 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
                     return sendContent(deskId, stageId, scope.selectedMacro, open);
                 } else if (scope.config) {
                     // Remember last destination desk and stage
-                    updateLastDestination(deskId, stageId);
+                    updateLastDestination(deskId, stageId, PREFERENCE_KEY);
 
                     scope.config.promise.finally(function() {
                         scope.loading = false;
@@ -263,6 +295,36 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
                 }
             }
 
+            scope.showSendAndPublish = function () {
+                if (config.ui && config.ui.sendAndPublish === false) {
+                    return false;
+                }
+
+                return true;
+            };
+
+            /**
+             * Check if the Send and Publish is allowed or not.
+             * Send And Publish is enabled using `superdesk.config.js`.
+             * @return {Boolean}
+             */
+            scope.canSendAndPublish = function() {
+                if (!scope.item) {
+                    return false;
+                }
+
+                return scope.showSendAndPublish() && !authoring.isPublished(scope.item) &&
+                    (scope.selectedDesk && (scope.item.task.desk !== scope.selectedDesk._id) ||
+                    scope.selectedStage && (scope.item.task.stage !== scope.selectedStage._id)) &&
+                    scope.mode === 'authoring' &&
+                    scope.itemActions.publish;
+            };
+
+            /**
+             * Check if the Send and Continue is allowed or not.
+             * Send And Continue is enabled using `superdesk.config.js`.
+             * @return {Boolean}
+             */
             scope.canSendAndContinue = function() {
                 if (config.ui && config.ui.publishSendAdnContinue === false) {
                     return false;
@@ -275,6 +337,9 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
              * @return {boolean}
              */
             scope.isSendEnabled = function() {
+                if (!scope.item) {
+                    return false;
+                }
                 return !authoring.isPublished(scope.item);
             };
 
@@ -306,6 +371,25 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
                                 });
                         } else {
                             return runSendAndContinue();
+                        }
+                    });
+            };
+
+            /*
+             * Send the current item to different desk or stage and publish the item from new location.
+             */
+            scope.sendAndPublish = function () {
+                return editor.countErrors()
+                    .then(function(spellcheckErrors) {
+                        if (spellcheckErrors > 0) {
+                            confirm.confirmSpellcheck(spellcheckErrors)
+                                .then(angular.bind(this, function send() {
+                                    return runSendAndPublish();
+                                }), function (err) { // cancel
+                                    return false;
+                                });
+                        } else {
+                            return runSendAndPublish();
                         }
                     });
             };
@@ -345,6 +429,59 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
             };
 
             /**
+             * Set the User Action.
+             */
+            scope.setUserAction = function(action) {
+                if (scope.currentUserAction === action) {
+                    return;
+                }
+                scope.currentUserAction = action;
+                storage.setItem(USER_ACTION_KEY, action);
+                setDesksAndStages();
+            };
+
+            /**
+             * Send the current item to different desk or stage and then publish the item
+             */
+            function runSendAndPublish() {
+                var deskId = scope.selectedDesk._id;
+                var stageId = scope.selectedStage._id || scope.selectedDesk.incoming_stage;
+                // send releases lock, increment version.
+                return sendAuthoring(deskId, stageId, scope.selectedMacro, true)
+                    .then(function (item) {
+                        // open the item for locking and publish
+                        scope.loading = true;
+                        return authoring.open(scope.item._id, false);
+                    })
+                    .then(function(item) {
+                        // update the original item to avoid 412 error.
+                        scope.orig._etag = scope.item._etag = item._etag;
+                        scope.orig._locked = scope.item._locked = item._locked;
+                        scope.orig.task = scope.item.task = item.task;
+                        // change the desk location.
+                        $rootScope.$broadcast('desk_stage:change');
+                        // if locked then publish
+                        if (item._locked) {
+                            return scope.publish();
+                        } else {
+                            // if not locked
+                            return $q.reject();
+                        }
+                    })
+                    .then(function(result) {
+                        if (result) {
+                            authoringWorkspace.close(false);
+                        }
+                    })
+                    .catch(function(error) {
+                        notify.error(gettext('Failed to send and publish.'));
+                    })
+                    .finally(function () {
+                        scope.loading = false;
+                    });
+            }
+
+            /**
              * Send the current item to different desk or stage and create a new take and open for editing.
              */
             function runSendAndContinue() {
@@ -376,6 +513,12 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
                     });
             }
 
+            /**
+             * Run the macro and returns to the modified item.
+             * @param {Object} item
+             * @param {String} macro
+             * @return {Object} promise
+             */
             function runMacro(item, macro) {
                 if (macro) {
                     return macros.call(macro, item, true).then(function(res) {
@@ -386,6 +529,15 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
                 return $q.when(item);
             }
 
+            /**
+             * Send to different location from authoring.
+             * @param {String} deskId - selected desk Id
+             * @param {String} stageId - selected stage Id
+             * @param {String} macro - macro to apply
+             * @param {Boolean} sendAndContinue - If "send and continue" or "send and publish"
+             *                                    return deferred promise object
+             * @return {Object} promise
+             */
             function sendAuthoring(deskId, stageId, macro, sendAndContinue) {
                 var deferred, msg;
                 scope.loading = true;
@@ -411,12 +563,16 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
                     .then(function(value) {
                         notify.success(gettext('Item sent.'));
 
-                        // Remember last destination desk and stage
-                        if (scope.destination_last &&
-                                (scope.destination_last.desk !== deskId && scope.destination_last.stage !== stageId)) {
-                            updateLastDestination(deskId, stageId);
-                        } else {
-                            updateLastDestination(deskId, stageId);
+                        if (scope.currentUserAction === scope.userActions.send_to) {
+                            // Remember last destination desk and stage for send_to.
+                            var last_destination = scope.destination_last[scope.currentUserAction];
+                            var key = PREFERENCE_KEY;
+
+                            if (!last_destination) {
+                                updateLastDestination(deskId, stageId, key);
+                            } else if (last_destination.desk !== deskId || last_destination.stage !== stageId) {
+                                updateLastDestination(deskId, stageId, key);
+                            }
                         }
 
                         if (sendAndContinue) {
@@ -447,12 +603,25 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
                 });
             }
 
-            function updateLastDestination(deskId, stageId) {
+            /**
+             * Update the preferences to store last destinations
+             * @param {String} deskId
+             * @param {String} stageId
+             * @param {String} key
+             */
+            function updateLastDestination(deskId, stageId, key) {
                 var updates = {};
-                updates[PREFERENCE_KEY] = {desk: deskId, stage: stageId};
-                preferencesService.update(updates, PREFERENCE_KEY);
+                updates[key] = {desk: deskId, stage: stageId};
+                preferencesService.update(updates, key);
             }
 
+            /**
+             * Send content to different desk and stage
+             * @param {String} deskId
+             * @param {String} stageId
+             * @param {String} macro
+             * @param {Boolean} open - If true open the item.
+             */
             function sendContent(deskId, stageId, macro, open) {
                 var finalItem;
                 scope.loading = true;
@@ -487,6 +656,13 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
                 });
             }
 
+            /**
+             * Fetch content from ingest to a different desk and stage
+             * @param {String} deskId
+             * @param {String} stageId
+             * @param {String} macro
+             * @param {Boolean} open - If true open the item.
+             */
             function sendIngest(deskId, stageId, macro, open) {
                 scope.loading = true;
 
@@ -506,76 +682,133 @@ export function SendItem($q, api, desks, notify, authoringWorkspace,
                 });
             }
 
+            /**
+             * Fetch desk and last selected desk and stage for send_to and publish action
+             * @return {Object} promise
+             */
             function fetchDesks() {
                 var p = desks.initialize()
-                .then(function() {
-                    scope.desks = desks.desks;
-                });
-
-                scope.getLastDestination().then(function(result) {
-                    if (result) {
-                        scope.destination_last = {
-                            desk: result.desk,
-                            stage: result.stage
-                        };
-                    }
-
-                    if (scope.mode === 'ingest') {
-                        p = p.then(function() {
-                            scope.selectDesk(desks.getCurrentDesk());
-                        });
-                    } else {
-                        p = p.then(function() {
-                            var itemDesk = desks.getItemDesk(scope.item);
-                            if (itemDesk) {
-                                if (scope.destination_last && scope.destination_last.desk != null) {
-                                    scope.selectDesk(desks.deskLookup[scope.destination_last.desk]);
-                                } else {
-                                    scope.selectDesk(itemDesk);
-                                }
-                            } else {
-                                if (scope.destination_last && scope.destination_last.desk != null) {
-                                    scope.selectDesk(desks.deskLookup[scope.destination_last.desk]);
-                                } else {
-                                    scope.selectDesk(desks.getCurrentDesk());
-                                }
-                            }
-                        });
-                    }
-                });
-
+                    .then(function() {
+                        // get all desks
+                        scope.allDesks = desks.desks;
+                        // get user desks
+                        return desks.fetchCurrentUserDesks();
+                    })
+                    .then(function(desk_list) {
+                        scope.userDesks = desk_list;
+                        return scope.getLastDestination(PREFERENCE_KEY);
+                    })
+                    .then(function(result) {
+                        if (result) {
+                            scope.destination_last.send_to = {
+                                desk: result.desk,
+                                stage: result.stage
+                            };
+                        }
+                    });
                 return p;
-
             }
 
-            function fetchStages() {
-                if (scope.selectedDesk) {
-                    scope.stages = desks.deskStages[scope.selectedDesk._id];
+            /**
+             * Set the last selected desk based on the user action.
+             * To be called after currentUserAction is set
+             */
+            function setDesksAndStages() {
+                if (!scope.currentUserAction) {
+                    return;
+                }
+                // set the desks for desk filter
+                if (scope.currentUserAction === scope.userActions.publish) {
+                    scope.desks = scope.userDesks;
+                } else {
+                    scope.desks = scope.allDesks;
+                }
 
-                    var stage = null;
-
-                    if (scope.destination_last) {
-                        stage = _.find(scope.stages, {_id: scope.destination_last.stage});
+                if (scope.mode === 'ingest') {
+                    scope.selectDesk(desks.getCurrentDesk());
+                } else {
+                    // set the last selected desk or current desk
+                    var itemDesk = desks.getItemDesk(scope.item);
+                    var last_destination = scope.destination_last[scope.currentUserAction];
+                    if (itemDesk) {
+                        if (last_destination && last_destination.desk != null) {
+                            scope.selectDesk(desks.deskLookup[last_destination.desk]);
+                        } else {
+                            scope.selectDesk(itemDesk);
+                        }
                     } else {
-                        if (scope.item.task && scope.item.task.stage) {
-                            stage = _.find(scope.stages, {_id: scope.item.task.stage});
+                        if (last_destination && last_destination.desk != null) {
+                            scope.selectDesk(desks.deskLookup[last_destination.desk]);
+                        } else {
+                            scope.selectDesk(desks.getCurrentDesk());
                         }
                     }
-
-                    if (!stage) {
-                        stage = _.find(scope.stages, {_id: scope.selectedDesk.incoming_stage});
-                    }
-
-                    scope.selectedStage = stage;
                 }
             }
 
+            /**
+             * Set stages and last selected stage.
+             */
+            function fetchStages() {
+                if (!scope.selectedDesk) {
+                    return;
+                }
+
+                scope.stages = desks.deskStages[scope.selectedDesk._id];
+                var last_destination = scope.destination_last[scope.currentUserAction];
+                var stage = null;
+
+                if (last_destination) {
+                    stage = _.find(scope.stages, {_id: last_destination.stage});
+                } else {
+                    if (scope.item.task && scope.item.task.stage) {
+                        stage = _.find(scope.stages, {_id: scope.item.task.stage});
+                    }
+                }
+
+                if (!stage) {
+                    stage = _.find(scope.stages, {_id: scope.selectedDesk.incoming_stage});
+                }
+
+                scope.selectedStage = stage;
+            }
+
+            /**
+             * Fetch macros for the selected desk.
+             */
             function fetchMacros() {
-                if (scope.selectedDesk != null) {
-                    macros.getByDesk(scope.selectedDesk.name)
-                    .then(function(_macros) {
-                        scope.macros = _macros;
-                    });
+                if (!scope.selectedDesk) {
+                    return;
+                }
+                macros.getByDesk(scope.selectedDesk.name)
+                .then(function(_macros) {
+                    scope.macros = _macros;
+                });
+            }
+
+            /**
+             * Initialize Item Actios and User Actions.
+             */
+            function initialize() {
+                initializeItemActions();
+                initializeUserAction();
+            }
+
+            /**
+             * Initialize User Action
+             */
+            function initializeUserAction() {
+                // default user action
+                scope.currentUserAction = storage.getItem(USER_ACTION_KEY) || scope.userActions.send_to;
+                if (scope.orig || scope.item) {
+                    // if the last action is send to but item is published open publish tab.
+                    if (scope.currentUserAction === scope.userActions.send_to &&
+                        scope.canPublishItem() && !scope.isSendEnabled()) {
+                        scope.currentUserAction = scope.userActions.publish;
+                    } else if (scope.currentUserAction === scope.userActions.publish &&
+                        !scope.canPublishItem() && scope.showSendButtonAndDestination()) {
+                        scope.currentUserAction = scope.userActions.send_to;
+                    }
                 }
             }
 

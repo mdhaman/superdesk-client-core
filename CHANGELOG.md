@@ -6,6 +6,7 @@
 - Hightlight multiple spaces in spellcheck and suggest a single space instead.
 - Added related item configuration to search slugline using exact match, prefix match or any word match.
 - Added `useDefaultTimezone` for global search queries.
+- Added `Send and Publish` so that item can be first send and publishd from different desk.
 
 ### Fixed
 - Fix global search to include time part for date search.

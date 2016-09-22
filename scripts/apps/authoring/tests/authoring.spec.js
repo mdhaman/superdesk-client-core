@@ -1984,7 +1984,9 @@ describe('send item directive', function() {
     beforeEach(window.module('superdesk.editor'));
     beforeEach(window.module('superdesk.preferences'));
     beforeEach(window.module('superdesk.authoring'));
+    beforeEach(window.module('superdesk.authoring'));
     beforeEach(window.module('superdesk.templates-cache'));
+    beforeEach(window.module('superdesk.api'));
 
     beforeEach(inject(function($templateCache) {
         $templateCache.put('scripts/apps/authoring/views/send-item.html', '');
@@ -2130,4 +2132,152 @@ describe('send item directive', function() {
             expect(iscope.destination_last.desk).toEqual('123');
             expect(iscope.destination_last.stage).toEqual('456');
         }));
+
+    it('can show send and publish button',
+        inject(function($compile, $rootScope, config) {
+            var scope, elem, iscope;
+            scope = $rootScope.$new();
+            scope.item = {
+                _id: 'foo',
+                type: 'text',
+                state: 'in-progress',
+                task: {
+                    desk: '123',
+                    stage: '456'
+                },
+                _current_version: 1
+            };
+            scope.action = 'edit';
+            elem = $compile('<div sd-send-item data-item="item" data-orig="item" data-mode="authoring" ' +
+                'data-action="action"></div>')(scope);
+            scope.$digest();
+            iscope = elem.isolateScope();
+            expect(iscope.canSendAndPublish()).toBeFalsy();
+            config.ui = {sendAndPublish: 1};
+            expect(iscope.canSendAndPublish()).toBeFalsy();
+            iscope.selectedDesk = {_id: '123'};
+            iscope.selectedStage = {_id: '456'};
+            expect(iscope.canSendAndPublish()).toBeFalsy();
+            iscope.selectedDesk = {_id: '123'};
+            iscope.selectedStage = {_id: '4566'};
+            iscope.itemActions = {publish: 1};
+            expect(iscope.canSendAndPublish()).toBeTruthy();
+            iscope.selectedDesk = {_id: '1234'};
+            iscope.selectedStage = {_id: '456'};
+            expect(iscope.canSendAndPublish()).toBeTruthy();
+        }));
+
+    describe('Send And Publish', function () {
+        var scope, iScope, elem, publish;
+        var movedItem = {
+            _id: 'foo',
+            type: 'text',
+            state: 'in-progress',
+            task: {
+                desk: 'New Desk',
+                stage: 'New Stage'
+            },
+            _current_version: 2,
+            _etag: '1111',
+            _locked: true
+        };
+
+        var selectedDesk = {
+            _id: 'New Desk', name: 'new desk'
+        };
+
+        var selectedStage = {
+            _id: 'New Stage', name: 'new stage'
+        };
+
+        beforeEach(inject(function($q, $compile, $rootScope, api, editor) {
+            spyOn(editor, 'countErrors').and.returnValue($q.when(0));
+            spyOn(api, 'find').and.returnValue($q.when({}));
+            spyOn(api, 'save').and.returnValue($q.when({task: {desk: 'new', stage: 'new'}}));
+
+            scope = $rootScope.$new();
+            scope.item = {
+                _id: 'foo',
+                type: 'text',
+                state: 'in-progress',
+                task: {
+                    desk: '123',
+                    stage: '456'
+                },
+                _current_version: 1,
+                _etag: '123'
+            };
+            scope.action = 'edit';
+            scope.publish = function() {
+                return publish;
+            };
+            elem = $compile('<div sd-send-item data-item="item" data-orig="item" data-mode="authoring" ' +
+                'data-action="action" data-publish="publish()"></div>')(scope);
+            scope.$digest();
+            iScope = elem.isolateScope();
+        }));
+
+        it('can send and publish item to different desk', inject(function (authoring, $q, authoringWorkspace) {
+            publish = true; // publish succeeds
+            iScope.selectedDesk = selectedDesk;
+            iScope.selectedStage = selectedStage;
+            spyOn(authoring, 'open').and.returnValue($q.when(movedItem));
+            spyOn(authoringWorkspace, 'close').and.returnValue($q.when(true));
+            expect(iScope.orig.task.desk).toBe('123');
+            expect(iScope.orig.task.stage).toBe('456');
+            expect(iScope.orig._etag).toBe('123');
+            iScope.sendAndPublish();
+            iScope.$digest();
+            expect(authoring.open).toHaveBeenCalledWith('foo', false);
+            expect(authoringWorkspace.close).toHaveBeenCalledWith(false);
+            expect(iScope.orig.task.desk).toBe(selectedDesk._id);
+            expect(iScope.orig.task.stage).toBe(selectedStage._id);
+            expect(iScope.orig._locked).toBe(true);
+            expect(iScope.orig._etag).toBe('1111');
+        }));
+
+        it('can send and publish item to different desk publish fails',
+            inject(function (authoring, $q, authoringWorkspace, notify) {
+                publish = false; // publish succeeds
+                iScope.selectedDesk = selectedDesk;
+                iScope.selectedStage = selectedStage;
+                spyOn(authoring, 'open').and.returnValue($q.when(movedItem));
+                spyOn(authoringWorkspace, 'close').and.returnValue($q.when(true));
+                expect(iScope.orig.task.desk).toBe('123');
+                expect(iScope.orig.task.stage).toBe('456');
+                expect(iScope.orig._etag).toBe('123');
+                iScope.sendAndPublish();
+                iScope.$digest();
+                expect(authoring.open).toHaveBeenCalledWith('foo', false);
+                expect(authoringWorkspace.close).not.toHaveBeenCalledWith(false);
+                expect(iScope.orig.task.desk).toBe(selectedDesk._id);
+                expect(iScope.orig.task.stage).toBe(selectedStage._id);
+                expect(iScope.orig._locked).toBe(true);
+                expect(iScope.orig._etag).toBe('1111');
+
+            }));
+
+        it('can send and publish item to different desk but locking failed',
+            inject(function (authoring, $q, authoringWorkspace, notify) {
+                publish = true; // publish succeeds
+                movedItem._locked = false; // locked failed.
+                iScope.selectedDesk = selectedDesk;
+                iScope.selectedStage = selectedStage;
+                spyOn(authoring, 'open').and.returnValue($q.when(movedItem));
+                spyOn(authoringWorkspace, 'close').and.returnValue($q.when(true));
+                spyOn(notify, 'error');
+                expect(iScope.orig.task.desk).toBe('123');
+                expect(iScope.orig.task.stage).toBe('456');
+                expect(iScope.orig._etag).toBe('123');
+                iScope.sendAndPublish();
+                iScope.$digest();
+                expect(authoring.open).toHaveBeenCalledWith('foo', false);
+                expect(authoringWorkspace.close).not.toHaveBeenCalledWith(false);
+                expect(iScope.orig.task.desk).toBe(selectedDesk._id);
+                expect(iScope.orig.task.stage).toBe(selectedStage._id);
+                expect(iScope.orig._locked).toBe(false);
+                expect(iScope.orig._etag).toBe('1111');
+                expect(notify.error).toHaveBeenCalledWith('Failed to send and publish.');
+            }));
+    });
 });

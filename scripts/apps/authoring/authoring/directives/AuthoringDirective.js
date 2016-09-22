@@ -74,21 +74,33 @@ export function AuthoringDirective(superdesk, superdeskFlags, authoringWorkspace
             $scope.proofread = false;
             $scope.referrerUrl = referrer.getReferrerUrl();
 
-            if ($scope.origItem.task && $scope.origItem.task.stage) {
-                if (archiveService.isLegal($scope.origItem)) {
-                    $scope.deskName = $scope.origItem.task.desk;
-                    $scope.stage = $scope.origItem.task.stage;
-                } else {
-                    api('stages').getById($scope.origItem.task.stage)
-                        .then(function(result) {
-                            $scope.stage = result;
-                        });
+            /**
+             * Get the Desk and Stage for the item.
+             */
+            function getDeskStage() {
+                if ($scope.origItem.task && $scope.origItem.task.stage) {
+                    if (archiveService.isLegal($scope.origItem)) {
+                        $scope.deskName = $scope.origItem.task.desk;
+                        $scope.stage = $scope.origItem.task.stage;
+                    } else {
+                        api('stages').getById($scope.origItem.task.stage)
+                            .then(function(result) {
+                                $scope.stage = result;
+                            });
 
-                    desks.fetchDeskById($scope.origItem.task.desk).then(function (desk) {
-                        $scope.deskName = desk.name;
-                    });
+                        desks.fetchDeskById($scope.origItem.task.desk).then(function (desk) {
+                            $scope.deskName = desk.name;
+                        });
+                    }
                 }
             }
+
+            getDeskStage();
+            /**
+             * `desk_stage:change` event from send and publish action.
+             * If send action succeeds but publish fails then we need change item location.
+             */
+            $scope.$on('desk_stage:change', getDeskStage);
 
             /**
              * Start editing current item
@@ -523,6 +535,8 @@ export function AuthoringDirective(superdesk, superdeskFlags, authoringWorkspace
              * Called by the sendItem directive before send.
              * If the $scope is dirty then upon confirmation save the item and then unlock the item.
              * If the $scope is not dirty then unlock the item.
+             * @param {String} action - action to display in confirmation dialog
+             * @return {Object} promise
              */
             $scope.beforeSend = function(action) {
                 $scope.sending = true;
@@ -530,8 +544,8 @@ export function AuthoringDirective(superdesk, superdeskFlags, authoringWorkspace
                     return confirm.confirmSendTo(action)
                     .then(function() {
                         return $scope.save().then(function() {
-                                   return lock.unlock($scope.origItem);
-                               });
+                            return lock.unlock($scope.origItem);
+                        });
                     }, function() { // cancel
                         return $q.reject();
                     });
