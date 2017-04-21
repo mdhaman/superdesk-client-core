@@ -25,7 +25,10 @@ export function ContentProfileSchemaEditor(gettext, content, config) {
         feature_image: gettext('Feature Image'),
         feature_media: gettext('Feature Media'),
         relatedItems: gettext('Related Items'),
-        company_codes: gettext('Company Codes')
+        company_codes: gettext('Company Codes'),
+        update_count: gettext('Update Count'),
+        related_items_count: gettext('Related Items'),
+        missing_link: gettext('Missing Link'),
     };
 
     const HAS_FORMAT_OPTIONS = {
@@ -50,6 +53,12 @@ export function ContentProfileSchemaEditor(gettext, content, config) {
             content.getTypeMetadata(scope.model._id).then((typeMetadata) => {
                 scope.model.schema = angular.extend({}, typeMetadata.schema);
                 scope.model.editor = angular.extend({}, typeMetadata.editor);
+                var readOnlyFields = _.pickBy(scope.model.editor, (f) => f.hasOwnProperty('readOnly'));
+                if (_.isEmpty(readOnlyFields)) {
+                    readOnlyFields = _.pickBy(angular.extend({}, content.contentProfileEditor),
+                        (f) => f.hasOwnProperty('readOnly'));
+                    angular.extend(scope.model.editor, readOnlyFields);
+                }
                 scope.loading = false;
             });
 
@@ -86,7 +95,9 @@ export function ContentProfileSchemaEditor(gettext, content, config) {
              */
             scope.toggle = function(id) {
                 scope.model.editor[id].enabled = !scope.model.editor[id].enabled;
-                scope.model.schema[id].enabled = !scope.model.schema[id].enabled;
+                if (scope.model.schema[id]) {
+                    scope.model.schema[id].enabled = !scope.model.schema[id].enabled;
+                }
                 form.$dirty = true;
             };
 
@@ -101,6 +112,12 @@ export function ContentProfileSchemaEditor(gettext, content, config) {
              * @return {Boolean}
              */
             scope.hasFormatOptions = (field) => !!HAS_FORMAT_OPTIONS[field]; // return boolean so :: will work
+
+            /**
+             * Get readonly fields for editor.
+             * @returns {*}
+             */
+            scope.getReadOnlyFields = () => _.pickBy(scope.model.editor, (f) => f.readOnly === true);
         }
     };
 }

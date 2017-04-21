@@ -106,7 +106,7 @@ export function AuthoringHeaderDirective(api, authoringWidgets, $rootScope, arch
                     archiveService.getRelatedItems(scope.item.slugline, fromDateTime, scope.item._id)
                         .then((items) => {
                             scope.relatedItems = items;
-                            if (items && items._items.length && !getNoTakes()) {
+                            if (items && items._items.length) {
                                 var takesPackage = _.find(scope.item.linked_in_packages,
                                     (linkedPackage) => linkedPackage && linkedPackage.package_type === 'takes');
                                 // if takes package is missing or not rewrite of.

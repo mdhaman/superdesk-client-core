@@ -49,7 +49,10 @@ export const DEFAULT_EDITOR = Object.freeze({
     },
     footer: {order: 17, enabled: true},
     body_footer: {order: 18, enabled: true},
-    sign_off: {order: 19, enabled: true}
+    sign_off: {order: 19, enabled: true},
+    missing_link: {enabled: true, readOnly: true},
+    update_count: {enabled: true, readOnly: true},
+    related_items_count: {enabled: true, readOnly: true}
 });
 
 export const CV_ALIAS = Object.freeze({
