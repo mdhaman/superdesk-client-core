@@ -250,7 +250,6 @@ export function AssociationController(config, send, api, $q, superdesk,
                 return;
             }
 
-            self.updateItemAssociation(scope, item, null, null, true);
 
             // save generated association id in order to be able to update the same item after editing.
             const originalRel = scope.rel;
@@ -262,6 +261,8 @@ export function AssociationController(config, send, api, $q, superdesk,
                     .finally(() => {
                         scope.loading = false;
                     });
+            } else {
+                self.updateItemAssociation(scope, item, null, null, true);
             }
         });
     };

@@ -5,13 +5,13 @@
         tabindex="{{tabindex}}"
         ng-if="editable && associations.isMediaEditable() && !related"
         ng-click="upload()"
-        class="item-association"></button>
+        class="item-association" ng-class="{'item-association--loading': loading}"></button>
 
     <!-- else -->
     <figure
         ng-if="!(editable && associations.isMediaEditable() && !related)"
         class="item-association"
-        ng-class="{'item-association--preview': related, 'item-association--loading': loading}">
+        ng-class="{'item-association--preview': related}">
             <a ng-if="related && editable" class="item-association__remove-item" ng-click="remove(related); $event.stopPropagation()">
                 <i class="icon-close-small"></i>
             </a>
