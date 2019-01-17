@@ -220,6 +220,10 @@ export function ChangeImageController($scope, gettext, notify, modal, _, api, $r
     */
     $scope.done = () => {
         if ($scope.data.isDirty) {
+            if (config.features.validatePointOfInterestForImages === true) {
+                $scope.saveCrops();
+            }
+
             $scope.resolve({
                 cropData: $scope.data.cropData,
                 metadata: _.pick($scope.data.metadata, [
