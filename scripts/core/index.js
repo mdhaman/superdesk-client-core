@@ -1,5 +1,7 @@
 import 'core/global-fixes';
 
+import 'core/utils';
+import 'core/lang';
 import 'core/activity';
 import 'core/analytics';
 import 'core/api';
@@ -24,7 +26,6 @@ import 'core/menu';
 import 'core/notify';
 import 'core/ui';
 import 'core/upload';
-import 'core/lang';
 import 'core/config';
 import 'core/loading';
 import 'core/form';
