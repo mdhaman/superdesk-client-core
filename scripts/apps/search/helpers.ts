@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import {DEFAULT_LIST_CONFIG} from './constants';
 import * as fields from './components/fields';
-import ng from '../../core/services/ng';
+import ng from 'core/services/ng';
 
 export function getSpecStyle(spec) {
     var style = {};

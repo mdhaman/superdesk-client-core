@@ -5,7 +5,7 @@ import {
 import * as Highlights from 'core/editor3/helpers/highlights';
 
 import {getLabelNameResolver} from 'apps/workspace/helpers/getLabelForFieldId';
-import {fieldsMetaKeys, META_FIELD_NAME, getFieldMetadata, getFieldId} from '../../../core/editor3/helpers/fieldsMeta';
+import {fieldsMetaKeys, META_FIELD_NAME, getFieldMetadata, getFieldId} from 'core/editor3/helpers/fieldsMeta';
 import {get} from 'lodash';
 import {gettext} from 'core/utils';
 
